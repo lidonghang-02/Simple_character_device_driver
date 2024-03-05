@@ -54,7 +54,7 @@ cat /proc/devices
 ### 编译运行测试文件`test.c`
 
 ```
-gcc test,c -o test
+gcc test.c -o test
 sudo ./test
 ```
 

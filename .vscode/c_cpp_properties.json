@@ -1,0 +1,33 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/ldh/kernel/linux-5.15.73/arch/arm/include",
+                "/home/ldh/kernel/linux-5.15.73/arch/sh/include",
+                // "/home/ldh/kernel/linux-5.15.73/arch/arm/include/generated",
+                "/home/ldh/kernel/linux-5.15.73/arch/arm64/include",
+                "/home/ldh/kernel/linux-5.15.73/include",
+                "/home/ldh/kernel/linux-5.15.73/usr/include",
+                "/home/ldh/kernel/linux-5.15.73/include/generated",
+                // "/home/ldh/kernel/linux-5.15.73/arch/arm/include/generated",
+                "/home/ldh/kernel/linux-5.15.73/arch/um/include/asm",
+                "/home/ldh/kernel/linux-5.15.73/include/uapi",
+                "/home/ldh/kernel/linux-5.15.73/include/generated/uapi",
+                "/home/ldh/kernel/linux-5.15.73/arch/um/include",
+                "/home/ldh/kernel/linux-5.15.73/tools/virtio"
+                // "/home/ldh/kernel/linux-5.10.10/**"
+                // "/home/ldh/kernel/linux-5.15.73/**"
+                // "/home/ldh/linux_study/linux-headers-5.15.0-69/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "configurationProvider": "ms-vscode.makefile-tools"
+        }
+    ],
+    "version": 4
+}

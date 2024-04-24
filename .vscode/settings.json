@@ -1,0 +1,16 @@
+{
+    "files.associations": {
+        "fs.h": "c",
+        "slab.h": "c",
+        "init.h": "c",
+        "cdev.h": "c",
+        "kdev_t.h": "c",
+        "uaccess.h": "c",
+        "io.h": "c",
+        "percpu-rwsem.h": "c",
+        "wait.h": "c",
+        "rcuwait.h": "c",
+        "signal.h": "c",
+        "rcupdate.h": "c"
+    }
+}

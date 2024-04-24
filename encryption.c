@@ -1,7 +1,7 @@
 /*
  * @Date: 2023-11-17 17:22:51
  * @author: lidonghang-02 2426971102@qq.com
- * @LastEditTime: 2023-11-17 18:29:58
+ * @LastEditTime: 2024-04-24 11:59:50
  */
 #include <linux/init.h>
 #include <linux/module.h>
@@ -337,7 +337,7 @@ static int encryption_init(void)
 		goto out_err_2;
 	}
 
-	devp = kzalloc(sizeof(struct encryption_char_dev) * minor, GFP_KERNEL); // 给字符设备分配空间，这里hello_nr_devs为2
+	devp = kzalloc(sizeof(struct encryption_char_dev) * minor, GFP_KERNEL);
 	if (!devp)
 	{
 		return -ENOMEM;

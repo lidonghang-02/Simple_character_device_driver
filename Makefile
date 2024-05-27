@@ -1,10 +1,15 @@
-ifneq ($(KERNELRELEASE),)
-obj-m:=encryption.o
-else
-KDIR :=/lib/modules/$(shell uname -r)/build
-PWD  :=$(shell pwd)
-all:
-	make -C $(KDIR) M=$(PWD) modules
+KVERS = $(shell uname -r)
+
+# Kernel modules
+obj-m += encryption.o
+
+# Specify flags for the module compilation.
+#EXTRA_CFLAGS=-g -O0
+
+build: kernel_modules
+
+kernel_modules:
+	make -C /lib/modules/$(KVERS)/build M=$(CURDIR) modules
+
 clean:
-	rm -rf *.o *.ko *.mod.c *.symvers *.c~ *~ *mod *.order .encryption.* .modules.* .Module.* 
-endif
+	make -C /lib/modules/$(KVERS)/build M=$(CURDIR) clean

@@ -1,50 +1,48 @@
 /*
  * @Date: 2023-11-17 17:22:51
  * @author: lidonghang-02 2426971102@qq.com
- * @LastEditTime: 2024-04-24 11:59:50
+ * @LastEditTime: 2024-05-27 11:57:56
  */
-#include <linux/init.h>
 #include <linux/module.h>
-#include <linux/kdev_t.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
-#include <linux/io.h>
 #include <linux/slab.h>
+#include <linux/device.h>
 
 #include "encryption.h"
 
-static int major = 256;
-static int minor = 0;
+#define DEV_MAJOR 0
+#define DEV_MINOR 0
+
+static int major = DEV_MAJOR;
+static int minor = DEV_MINOR;
 
 struct encryption_char_dev
 {
 	struct cdev cdev;
+	struct device *class_dev;
+
 	char *key;
 	char *buffer;
 	int key_len;
 	int length;
-	int mode, status;
+	int mode;
 };
+
 char S[257]; // State vector
 char T[257]; // Temporary vector
 
 struct encryption_char_dev *devp;
 struct class *cls;
 
-static dev_t devno;
-struct device *class_dev = NULL;
-
 static int encryption_open(struct inode *inode, struct file *filep)
 {
 	struct encryption_char_dev *dev;
-	printk(KERN_INFO "%s open \n", current->comm);
 	dev = container_of(inode->i_cdev, struct encryption_char_dev, cdev); // 获取设备结构体的地址
-	dev->length = 0;
-	dev->mode = NORMAL;
-	dev->status = 0;
 
 	filep->private_data = dev; // 将设备结构地址放到文件描述符结构的私有数据中
+	printk("encryption_open()\n");
 	return 0;
 }
 static int encryption_release(struct inode *inode, struct file *filep)
@@ -54,247 +52,130 @@ static int encryption_release(struct inode *inode, struct file *filep)
 	return 0;
 }
 
+static void work_data(char *data, struct encryption_char_dev *dev, int size)
+{
+	int i = 0, j = 0, t;
+	int a = 0, b = 0;
+	while (i < 256)
+	{
+		S[i] = i;
+		T[i] = dev->key[i % dev->key_len];
+		i++;
+	}
+
+	for (i = 0; i < 256; i++)
+	{
+		j = (j + S[i] + T[i]) % 256;
+		swap(S[i], S[j]);
+	}
+
+	for (i = 0; i < size; i++)
+	{
+
+		a = (a + 1) % 256;
+		b = (b + S[a]) % 256;
+		swap(S[a], S[b]);
+
+		t = (S[a] + S[b]) % 256;
+		data[i] = data[i] ^ S[t];
+	}
+}
+
 static ssize_t encryption_read(struct file *filep, char __user *buf, size_t size, loff_t *pos)
 {
-
 	struct encryption_char_dev *dev = filep->private_data;
+	printk("encryption_read()\n");
 
 	if (*pos >= dev->length)
 	{
-		return 0;
+		printk("dev-len = %d\n", dev->length);
+		return -ENOMEM;
 	}
+
 	if (size > dev->length - *pos)
-	{
 		size = dev->length - *pos;
-	}
+
 	// 加密读取数据
-	if (dev->mode == DECRYPTION && dev->status == READ_Status)
-	{
-		char keystream, ch;
-		char *temp = (char *)kzalloc(dev->length, GFP_KERNEL);
-		if (!temp)
-		{
-			return -ENOMEM;
-		}
-		char *temp_buf = (char *)kzalloc(dev->length, GFP_KERNEL);
-		if (!temp_buf)
-		{
-			return -ENOMEM;
-		}
-		int i = 0, j = 0, t;
-		int a = 0, b = 0;
-		memcpy(temp_buf, dev->buffer + *pos, size);
+	if (dev->mode == DECRYPTION)
+		work_data(dev->buffer + *pos, dev, (int)size);
 
-		while (i < 256)
-		{
-			S[i] = i;
-			T[i] = dev->key[i % dev->key_len];
-			i++;
-		}
-
-		for (i = 0; i < 256; i++)
-		{
-			j = (j + S[i] + T[i]) + 256;
-			j = j % 256;
-			swap(S[i], S[j]);
-		}
-		for (i = 0; i < size; i++)
-		{
-
-			b = (a + 1 + 256) % 256;
-			b = (b + S[a] + 256) % 256;
-			swap(S[a], S[b]);
-
-			t = (S[a] + S[b] + 256) % 256;
-			keystream = S[t];
-			ch = (int)temp_buf[i] ^ (int)keystream;
-			temp[i] = ch;
-		}
-
-		temp[size] = '\0';
-		// printk(KERN_INFO "decrypted read->%s 		len->%d\n", temp, strlen(temp));
-
-		if (copy_to_user(buf, temp, size))
-		{
-			return -EFAULT;
-		}
-		kfree(temp);
-		kfree(temp_buf);
-	}
-	else if (dev->mode == NORMAL && dev->status == READ_Status)
-	{
-		// printk(KERN_INFO "normal read->%s 		len->%d\n", dev->buffer, strlen(dev->buffer));
-
-		if (copy_to_user(buf, dev->buffer + *pos, size))
-		{
-			return -EFAULT;
-		}
-	}
-	else
+	if (copy_to_user(buf, dev->buffer + *pos, size))
 		return -EFAULT;
 
 	*pos += size;
+
 	return size;
 }
 static ssize_t encryption_write(struct file *filep, const char __user *buf, size_t size, loff_t *pos)
 {
 	struct encryption_char_dev *dev = filep->private_data;
-	int error = -ENOMEM;
 
-	if (dev->mode == ENCRYPTION && dev->status == WRITE_Status)
+	printk("encryption_write()\n");
+
+	char *new_buffer = (char *)kmalloc(size + dev->length, GFP_KERNEL);
+	if (!new_buffer)
 	{
-		char keystream, ch;
-		// char *new_buffer = NULL;
-		char *temp = (char *)kzalloc(size + size, GFP_KERNEL);
-		if (!temp)
-		{
-			return -ENOMEM;
-		}
-		char *temp_buf = (char *)kzalloc(size + size, GFP_KERNEL);
-		if (!temp_buf)
-		{
-			return -ENOMEM;
-		}
-		int t;
-		int a = 0, b = 0;
-		int i = 0, j = 0;
-
-		if (copy_from_user(temp_buf, buf, size))
-		{
-			goto error_2;
-		}
-
-		while (i < 256)
-		{
-			S[i] = i;
-			T[i] = dev->key[i % dev->key_len];
-			i++;
-		}
-		for (i = 0; i < 256; i++)
-		{
-			j = (j + S[i] + T[i]) + 256;
-			j = j % 256;
-			swap(S[i], S[j]);
-		}
-		for (i = 0; i < size; i++)
-		{
-
-			b = (a + 1 + 256) % 256;
-			b = (b + S[a] + 256) % 256;
-			swap(S[a], S[b]);
-
-			t = (S[a] + S[b] + 256) % 256;
-			keystream = S[t];
-			ch = (int)temp_buf[i] ^ (int)keystream;
-			temp[i] = ch;
-		}
-		temp[size] = '\0';
-		size = strlen(temp);
-		char *new_buffer = (char *)kzalloc(size + dev->length + 2, GFP_KERNEL);
-
-		if (!new_buffer)
-		{
-			goto error_1;
-		}
-
-		memcpy(new_buffer, dev->buffer, dev->length);
-		memcpy(new_buffer + dev->length, temp, size);
-
-		kfree(dev->buffer);
-		kfree(temp);
-		kfree(temp_buf);
-		dev->buffer = new_buffer;
-		dev->length += size;
-		// printk(KERN_INFO "encrypted write-> %s 		len->%d\n", dev->buffer, strlen(dev->buffer));
+		printk(KERN_ERR "kmalloc failed\n");
+		return -ENOMEM;
 	}
-	else if (dev->mode == NORMAL && dev->status == WRITE_Status)
-	{
-		char *new_buffer = (char *)kzalloc(size + dev->length, GFP_KERNEL);
-		if (!new_buffer)
-		{
-			printk(KERN_INFO "normal write new buffer error\n");
-			goto error_1;
-		}
-		if (copy_from_user(new_buffer + dev->length, buf, size))
-		{
-			error = -EFAULT;
-			goto error_2;
-		}
-		memcpy(new_buffer, dev->buffer, dev->length);
-		kfree(dev->buffer);
-		dev->buffer = new_buffer;
-		dev->length += size;
-		// printk(KERN_INFO "normal write-> %s 		len->%d\n", dev->buffer, strlen(dev->buffer));
-	}
-	else if (dev->mode == KEY)
-	{
-		kfree(dev->key);
-		dev->key = (char *)kzalloc(size, GFP_KERNEL);
-		if (!dev->key)
-		{
-			goto error_1;
-		}
-		if (copy_from_user(dev->key, buf, size))
-		{
-			goto error_2;
-		}
-		dev->key_len = strlen(dev->key);
-		// printk(KERN_INFO "set key-> %s 		len->%d\n", dev->key, strlen(dev->key));
-	}
-	else
-		goto error_2;
-	return size;
-error_2:
+	memcpy(new_buffer, dev->buffer, dev->length);
+
+	if (copy_from_user(new_buffer + dev->length, buf, size))
+		return -EFAULT;
+
 	kfree(dev->buffer);
-	kfree(dev->key);
-error_1:
-	return error;
+	dev->buffer = new_buffer;
+	if (dev->mode == ENCRYPTION)
+		work_data(dev->buffer + dev->length, dev, (int)size);
+
+	dev->length += size;
+	*pos += size;
+	return size;
 }
 
-long encryption_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+static long encryption_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
-	long ret = 0;
-	int temp_mode = 0;
-	void __user *argp = (void __user *)arg;
-	int __user *p = argp;
+	int ret = 0;
+	char tmp_key[256] = {0};
 	struct encryption_char_dev *dev = filep->private_data;
 
-	if (_IOC_TYPE(cmd) != DEV_FIFO_TYPE)
-	{
-		pr_err("cmd   %u,bad magic 0x%x/0x%x.\n", cmd, _IOC_TYPE(cmd), DEV_FIFO_TYPE);
+	if (_IOC_TYPE(cmd) != DEV_MAJIC)
 		return -ENOTTY; // 检查幻数
-	}
-	if (_IOC_NR(cmd) > DEV_FIFO_TYPE)
+
+	if (_IOC_NR(cmd) > IO_MAXNR)
 		return -ENOTTY; // 检查命令编号
 
-	if (_IOC_DIR(cmd) & _IOC_READ) // 涉及到用户空间与内核空间数据交互，判断读OK吗？
-		ret = !access_ok((void __user *)arg, _IOC_SIZE(cmd));
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		ret = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		ret = !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
 	if (ret)
 		return -EFAULT;
 
 	switch (cmd)
 	{
 	case Setkey:
-		dev->mode = KEY;
+		if (copy_from_user(tmp_key, (char __user *)arg, sizeof(tmp_key)))
+			return -EFAULT;
+
+		if (dev->key)
+			kfree(dev->key);
+		dev->key_len = strlen(tmp_key);
+		dev->key = kmalloc(sizeof(char) * dev->key_len, GFP_KERNEL);
+		memcpy(dev->key, tmp_key, sizeof(char) * dev->key_len);
 		break;
 	case SetMode:
-		ret = get_user(temp_mode, p);
-		if (temp_mode == ENCRYPTION)
-			dev->mode = ENCRYPTION;
-		else if (temp_mode == DECRYPTION)
-			dev->mode = DECRYPTION;
-		else
-			dev->mode = NORMAL;
-		break;
-	case StartWrite:
-		dev->status = WRITE_Status;
-		break;
-	case StartRead:
-		dev->status = READ_Status;
+
+		ret = get_user(dev->mode, (unsigned int __user *)arg);
+		if (ret)
+			return -EFAULT;
 		break;
 	case Reset:
-		kfree(dev->buffer);
-		dev->length = 0;
+		if (dev->buffer)
+		{
+			kfree(dev->buffer);
+			dev->length = 0;
+		}
 		break;
 	default:
 		return -ENOTTY;
@@ -302,63 +183,85 @@ long encryption_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 
 	return ret;
 }
-static struct file_operations encryption_ops =
-	{
-		.open = encryption_open,
-		.release = encryption_release,
-		.read = encryption_read,
-		.write = encryption_write,
-		.unlocked_ioctl = encryption_ioctl,
+struct file_operations encryption_ops = {
+	.owner = THIS_MODULE,
+	.open = encryption_open,
+	.release = encryption_release,
+	.read = encryption_read,
+	.write = encryption_write,
+	.unlocked_ioctl = encryption_ioctl,
 };
-static int encryption_init(void)
+static int __init encryption_init_module(void)
 {
-	int result;
+	int ret;
+	dev_t devno;
 
-	printk("encryption_init \n");
-	result = register_chrdev(major, "encryption", &encryption_ops);
-	if (result < 0)
+	devno = MKDEV(major, minor);
+
+	if (major)
+		ret = register_chrdev_region(devno, 1, "encryption");
+	else
 	{
-		printk("register_chrdev fail \n");
-		return result;
+		ret = alloc_chrdev_region(&devno, 0, 1, "encryption");
+		major = MAJOR(devno);
 	}
+
+	if (ret < 0)
+		return ret;
+
+	devp = kzalloc(sizeof(struct encryption_char_dev), GFP_KERNEL);
+	if (!devp)
+	{
+		printk(KERN_ERR "kzalloc failed\n");
+		ret = -ENOMEM;
+		goto out_err_1;
+	}
+	devp->mode = NORMAL;
+
 	cls = class_create(THIS_MODULE, "encryption_cls");
 	if (IS_ERR(cls))
 	{
 		printk(KERN_ERR "class_create() failed for cls\n");
-		result = PTR_ERR(cls);
+		ret = PTR_ERR(cls);
 		goto out_err_1;
 	}
-	devno = MKDEV(major, minor);
 
-	class_dev = device_create(cls, NULL, devno, NULL, "encryptiondev");
-	if (IS_ERR(class_dev))
-	{
-		result = PTR_ERR(class_dev);
+	cdev_init(&devp->cdev, &encryption_ops);
+	devp->cdev.owner = THIS_MODULE;
+
+	ret = cdev_add(&devp->cdev, devno, 1);
+	if (ret)
 		goto out_err_2;
+
+	devp->class_dev = device_create(cls, NULL, devno, NULL, "encryptiondev");
+	if (IS_ERR(devp->class_dev))
+	{
+		ret = PTR_ERR(devp->class_dev);
+		goto out_err_3;
 	}
 
-	devp = kzalloc(sizeof(struct encryption_char_dev) * minor, GFP_KERNEL);
-	if (!devp)
-	{
-		return -ENOMEM;
-	}
+	printk("encryption_init \n");
 	return 0;
 
+out_err_3:
+	cdev_del(&devp->cdev);
 out_err_2:
 	class_destroy(cls);
 out_err_1:
 	unregister_chrdev(major, "encryption");
-	return result;
+	return ret;
 }
-static void encryption_exit(void)
+static void __exit encryption_exit_module(void)
 {
-	printk("encryption_exit \n");
-	device_destroy(cls, devno);
+	device_destroy(cls, MKDEV(major, minor));
+	cdev_del(&devp->cdev);
 	class_destroy(cls);
-	unregister_chrdev(major, "encryption");
+	unregister_chrdev_region(MKDEV(major, minor), 1);
 	kfree(devp);
-	return;
+	printk("encryption_exit \n");
 }
-module_init(encryption_init);
-module_exit(encryption_exit);
+module_init(encryption_init_module);
+module_exit(encryption_exit_module);
+
+MODULE_AUTHOR("lidonghang-02");
 MODULE_LICENSE("GPL");
